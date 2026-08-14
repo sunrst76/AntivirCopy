@@ -7,82 +7,70 @@
 #include <QFileInfo>
 #include <QSettings>
 #include <QDateTime>
+#include <QDebug>
+#include <QCoreApplication>
 
 // ==================== РЕАЛИЗАЦИЯ CopyWorker ====================
-
+// (Код CopyWorker остается без изменений)
 CopyWorker::CopyWorker(int workerId, const QString &src, const QString &dst)
     : m_id(workerId), m_src(src), m_dst(dst) {}
 
 int CopyWorker::countFiles(const QString &dirPath) {
     int count = 0;
     QDirIterator it(dirPath, QDir::Files, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        it.next();
-        count++;
-    }
+    while (it.hasNext()) { it.next(); count++; }
     return count;
 }
 
-void CopyWorker::process() {
-    QDir srcDir(m_src);
-    QDir dstDir(m_dst);
-    int totalFiles = countFiles(m_src);
+void CopyWorker::cancel() {
+    m_cancelRequested = true;
+}
 
+void CopyWorker::process() {
+    QDir srcDir(m_src); QDir dstDir(m_dst);
+    int totalFiles = countFiles(m_src);
     if (totalFiles == 0) {
         dstDir.mkpath(m_dst);
-        emit progressChanged(m_id, 100);
-        emit finished(m_id, true);
+        emit progressChanged(m_id, 100); emit finished(m_id, true);
         return;
     }
-
-    if (!dstDir.exists() && !dstDir.mkpath(m_dst)) {
-        emit finished(m_id, false);
-        return;
-    }
+    if (!dstDir.exists() && !dstDir.mkpath(m_dst)) { emit finished(m_id, false); return; }
 
     int copiedFiles = 0;
     QDirIterator it(m_src, QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
-
     while (it.hasNext()) {
+        // КРИТИЧЕСКИЙ МОМЕНТ: Проверяем флаг отмены на каждой итерации цикла
+        // Позволяем операционной системе обработать системные сигналы отмены в этом потоке
+        QCoreApplication::processEvents();
+
+        if (m_cancelRequested) {
+            emit finished(m_id, false); // Выходим со статусом "неуспешно"
+            return;
+        }
         it.next();
         QFileInfo srcFileInfo = it.fileInfo();
         QString relativePath = srcDir.relativeFilePath(srcFileInfo.absoluteFilePath());
         QString destPath = dstDir.filePath(relativePath);
 
         if (srcFileInfo.isDir()) {
-            QDir subDir;
-            if (!subDir.mkpath(destPath)) {
-                emit finished(m_id, false);
-                return;
-            }
+            QDir subDir; if (!subDir.mkpath(destPath)) { emit finished(m_id, false); return; }
         } else {
             if (QFile::exists(destPath)) {
                 QFileInfo destFileInfo(destPath);
                 if (srcFileInfo.lastModified() <= destFileInfo.lastModified() && srcFileInfo.size() == destFileInfo.size()) {
                     copiedFiles++;
-                    int progress = static_cast<int>((static_cast<double>(copiedFiles) / totalFiles) * 100);
-                    emit progressChanged(m_id, progress);
+                    emit progressChanged(m_id, static_cast<int>((static_cast<double>(copiedFiles) / totalFiles) * 100));
                     continue;
                 }
-                if (!QFile::remove(destPath)) {
-                    emit finished(m_id, false);
-                    return;
-                }
+                if (!QFile::remove(destPath)) { emit finished(m_id, false); return; }
             }
-
             if (QFile::copy(srcFileInfo.absoluteFilePath(), destPath)) {
                 copiedFiles++;
-                int progress = static_cast<int>((static_cast<double>(copiedFiles) / totalFiles) * 100);
-                emit progressChanged(m_id, progress);
-            } else {
-                emit finished(m_id, false);
-                return;
-            }
+                emit progressChanged(m_id, static_cast<int>((static_cast<double>(copiedFiles) / totalFiles) * 100));
+            } else { emit finished(m_id, false); return; }
         }
     }
-
-    emit progressChanged(m_id, 100);
-    emit finished(m_id, true);
+    emit progressChanged(m_id, 100); emit finished(m_id, true);
 }
 
 
@@ -93,195 +81,200 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
-
-    // СДЕЛАТЬ ОКНО ФИКСИРОВАННОГО РАЗМЕРА:
-    // Берутся текущие ширина и высота, заданные в Qt Designer, и намертво закрепляются
     this->setFixedSize(this->size());
 
-    // Сброс указателей потоков в безопасное состояние
+    // Инициализация массивов данных
     for (int i = 0; i < 3; ++i) {
         m_threads[i] = nullptr;
         m_workers[i] = nullptr;
     }
 
-    // Инициализация шкал прогресса
+    // Первоначальная настройка UI элементов
     ui->progressBar_1->setValue(0);
     ui->progressBar_2->setValue(0);
     ui->progressBar_3->setValue(0);
 
-    // --- Сигналы кнопок Блока №1 ---
-    connect(ui->btnSelectSource_1, &QPushButton::clicked, this, &MainWindow::onSelectSourceClicked);
-    connect(ui->btnSelectDest_1, &QPushButton::clicked, this, &MainWindow::onSelectDestClicked);
-    connect(ui->btnStartCopy_1, &QPushButton::clicked, this, &MainWindow::onStartCopyClicked);
+    // Подключение кнопок управления (теперь они ОДНИ на форме)
+    connect(ui->btnSelectSource, &QPushButton::clicked, this, &MainWindow::onSelectSourceClicked);
+    connect(ui->btnSelectDest, &QPushButton::clicked, this, &MainWindow::onSelectDestClicked);
+    connect(ui->btnStartCopy, &QPushButton::clicked, this, &MainWindow::onStartCopyClicked);
 
-    // --- Сигналы кнопок Блока №2 ---
-    connect(ui->btnSelectSource_2, &QPushButton::clicked, this, &MainWindow::onSelectSourceClicked);
-    connect(ui->btnSelectDest_2, &QPushButton::clicked, this, &MainWindow::onSelectDestClicked);
-    connect(ui->btnStartCopy_2, &QPushButton::clicked, this, &MainWindow::onStartCopyClicked);
+    // Подключение единственных полей ввода
+    connect(ui->lineEditSource, &QLineEdit::textChanged, this, &MainWindow::onSourceTextChanged);
+    connect(ui->lineEditDest, &QLineEdit::textChanged, this, &MainWindow::onDestTextChanged);
 
-    // --- Сигналы кнопок Блока №3 ---
-    connect(ui->btnSelectSource_3, &QPushButton::clicked, this, &MainWindow::onSelectSourceClicked);
-    connect(ui->btnSelectDest_3, &QPushButton::clicked, this, &MainWindow::onSelectDestClicked);
-    connect(ui->btnStartCopy_3, &QPushButton::clicked, this, &MainWindow::onStartCopyClicked);
+    // Подключение переключателей (RadioButtons вместо Checkboxes)
+    // В Qt Designer назовите их: radioButton_1, radioButton_2, radioButton_3
+    connect(ui->radioButton_1, &QRadioButton::toggled, this, &MainWindow::onProfileChanged);
+    connect(ui->radioButton_2, &QRadioButton::toggled, this, &MainWindow::onProfileChanged);
+    connect(ui->radioButton_3, &QRadioButton::toggled, this, &MainWindow::onProfileChanged);
 
-    // --- Связывание полей ручного ввода ---
-    connect(ui->lineEditSource_1, &QLineEdit::textChanged, this, &MainWindow::onSourceTextChanged);
-    connect(ui->lineEditDest_1, &QLineEdit::textChanged, this, &MainWindow::onDestTextChanged);
-    connect(ui->lineEditSource_2, &QLineEdit::textChanged, this, &MainWindow::onSourceTextChanged);
-    connect(ui->lineEditDest_2, &QLineEdit::textChanged, this, &MainWindow::onDestTextChanged);
-    connect(ui->lineEditSource_3, &QLineEdit::textChanged, this, &MainWindow::onSourceTextChanged);
-    connect(ui->lineEditDest_3, &QLineEdit::textChanged, this, &MainWindow::onDestTextChanged);
+    // В конструктор MainWindow:
+    connect(ui->btnCancelCopy, &QPushButton::clicked, this, &MainWindow::onCancelCopyClicked);
 
-    // Автоматическая загрузка сохраненных данных
+    // По умолчанию кнопка отмены выключена, пока ничего не копируется
+    ui->btnCancelCopy->setEnabled(false);
+
+    // Загружаем сохраненные пути
     loadSettings();
+
+    // Принудительно триггерим обновление текста в полях под выбранный профиль
+    ui->radioButton_1->setChecked(true);
+    onProfileChanged();
 }
 
 MainWindow::~MainWindow() {
-    // Безопасная деструкция работающих потоков в фоне
     for (int i = 0; i < 3; ++i) {
         if (m_threads[i] && m_threads[i]->isRunning()) {
-            m_threads[i]->quit();
-            m_threads[i]->wait();
+            m_threads[i]->quit(); m_threads[i]->wait();
         }
     }
     delete ui;
 }
 
+// Вспомогательный метод: возвращает индекс (0, 1 или 2) выбранного сейчас профиля
+int MainWindow::getCurrentProfileIdx() const {
+    if (ui->radioButton_2->isChecked()) return 1;
+    if (ui->radioButton_3->isChecked()) return 2;
+    return 0; // По умолчанию первый вариант
+}
+
 void MainWindow::loadSettings() {
     QSettings settings("MyCompany", "FolderSyncApp");
-
     for (int i = 0; i < 3; ++i) {
         m_sourcePaths[i] = settings.value(QString("Block_%1/Source").arg(i)).toString();
         m_destPaths[i] = settings.value(QString("Block_%1/Dest").arg(i)).toString();
     }
-
-    // ИСПРАВЛЕНО: Добавлены индексы, [1], [2] для массивов
-    ui->lineEditSource_1->setText(m_sourcePaths[0]);
-    ui->lineEditDest_1->setText(m_destPaths[0]);
-
-    ui->lineEditSource_2->setText(m_sourcePaths[1]);
-    ui->lineEditDest_2->setText(m_destPaths[1]);
-
-    ui->lineEditSource_3->setText(m_sourcePaths[2]);
-    ui->lineEditDest_3->setText(m_destPaths[2]);
 }
 
-
-// Слот для обработки прямого ручного набора в поле Source
+// Срабатывает при ручном изменении текста в поле Source
 void MainWindow::onSourceTextChanged(const QString &text) {
-    QLineEdit *lineEdit = qobject_cast<QLineEdit*>(sender());
-    if (!lineEdit) return;
-
-    int idx = lineEdit->objectName().endsWith("_1") ? 0 : (lineEdit->objectName().endsWith("_2") ? 1 : 2);
+    int idx = getCurrentProfileIdx();
     m_sourcePaths[idx] = text.trimmed();
 
     QSettings settings("MyCompany", "FolderSyncApp");
     settings.setValue(QString("Block_%1/Source").arg(idx), m_sourcePaths[idx]);
 }
 
-// Слот для обработки прямого ручного набора в поле Dest
+// Срабатывает при ручном изменении текста в поле Dest
 void MainWindow::onDestTextChanged(const QString &text) {
-    QLineEdit *lineEdit = qobject_cast<QLineEdit*>(sender());
-    if (!lineEdit) return;
-
-    int idx = lineEdit->objectName().endsWith("_1") ? 0 : (lineEdit->objectName().endsWith("_2") ? 1 : 2);
+    int idx = getCurrentProfileIdx();
     m_destPaths[idx] = text.trimmed();
 
     QSettings settings("MyCompany", "FolderSyncApp");
     settings.setValue(QString("Block_%1/Dest").arg(idx), m_destPaths[idx]);
 }
 
+// Нажатие на кнопку выбора папки-источника
 void MainWindow::onSelectSourceClicked() {
-    QPushButton *btn = qobject_cast<QPushButton*>(sender());
-    if (!btn) return;
-
-    int idx = btn->objectName().endsWith("_1") ? 0 : (btn->objectName().endsWith("_2") ? 1 : 2);
-
+    int idx = getCurrentProfileIdx();
     QString path = QFileDialog::getExistingDirectory(this, "Выберите исходную папку", m_sourcePaths[idx]);
     if (!path.isEmpty()) {
-        // Установка текста вызовет сигнал textChanged() и автоматически сохранит данные
-        if (idx == 0) ui->lineEditSource_1->setText(path);
-        else if (idx == 1) ui->lineEditSource_2->setText(path);
-        else ui->lineEditSource_3->setText(path);
+        ui->lineEditSource->setText(path); // Это само вызовет сигнал onSourceTextChanged и сохранит данные
     }
 }
 
+// Нажатие на кнопку выбора папки назначения
 void MainWindow::onSelectDestClicked() {
-    QPushButton *btn = qobject_cast<QPushButton*>(sender());
-    if (!btn) return;
-
-    int idx = btn->objectName().endsWith("_1") ? 0 : (btn->objectName().endsWith("_2") ? 1 : 2);
-
+    int idx = getCurrentProfileIdx();
     QString path = QFileDialog::getExistingDirectory(this, "Выберите целевую папку", m_destPaths[idx]);
     if (!path.isEmpty()) {
-        if (idx == 0) ui->lineEditDest_1->setText(path);
-        else if (idx == 1) ui->lineEditDest_2->setText(path);
-        else ui->lineEditDest_3->setText(path);
+        ui->lineEditDest->setText(path);
     }
-}
-
-void MainWindow::onStartCopyClicked() {
-    QPushButton *btn = qobject_cast<QPushButton*>(sender());
-    if (!btn) return;
-
-    int idx = btn->objectName().endsWith("_1") ? 0 : (btn->objectName().endsWith("_2") ? 1 : 2);
-
-    if (m_sourcePaths[idx].isEmpty() || m_destPaths[idx].isEmpty()) {
-        QMessageBox::warning(this, "Ошибка", QString("Блок %1: Заполните оба пути!").arg(idx + 1));
-        return;
-    }
-    if (m_sourcePaths[idx] == m_destPaths[idx]) {
-        QMessageBox::warning(this, "Ошибка", QString("Блок %1: Пути источника и назначения совпадают!").arg(idx + 1));
-        return;
-    }
-
-    startBlockCopy(idx);
 }
 
 void MainWindow::startBlockCopy(int blockIdx) {
-    // Визуальная блокировка элементов интерфейса конкретного блока
-    if (blockIdx == 0) { ui->btnStartCopy_1->setEnabled(false); ui->progressBar_1->setValue(0); }
-    else if (blockIdx == 1) { ui->btnStartCopy_2->setEnabled(false); ui->progressBar_2->setValue(0); }
-    else { ui->btnStartCopy_3->setEnabled(false); ui->progressBar_3->setValue(0); }
+    if (m_sourcePaths[blockIdx].isEmpty() || m_destPaths[blockIdx].isEmpty()) return;
+    if (m_threads[blockIdx] && m_threads[blockIdx]->isRunning()) return;
 
-    m_threads[blockIdx] = new QThread();
+    if (blockIdx == getCurrentProfileIdx()) {
+        ui->btnStartCopy->setEnabled(false);
+        ui->btnCancelCopy->setEnabled(true);
+    }
+
     m_workers[blockIdx] = new CopyWorker(blockIdx, m_sourcePaths[blockIdx], m_destPaths[blockIdx]);
+    m_threads[blockIdx] = new QThread();
     m_workers[blockIdx]->moveToThread(m_threads[blockIdx]);
 
     connect(m_threads[blockIdx], &QThread::started, m_workers[blockIdx], &CopyWorker::process);
     connect(m_workers[blockIdx], &CopyWorker::progressChanged, this, &MainWindow::onCopyProgress);
     connect(m_workers[blockIdx], &CopyWorker::finished, this, &MainWindow::onCopyFinished);
 
-    // Освобождение памяти
+    // НАДЕЖНОЕ СВЯЗЫВАНИЕ ОТМЕНЫ: При генерации сигнала requestCancel, у воркера вызовется слот cancel
+    connect(this, &MainWindow::requestCancel, m_workers[blockIdx], [this, blockIdx](int targetId){
+        if (targetId == blockIdx && m_workers[blockIdx]) {
+            m_workers[blockIdx]->cancel();
+        }
+    }, Qt::DirectConnection); // Прямое соединение мгновенно меняет флаг в памяти
+
     connect(m_workers[blockIdx], &CopyWorker::finished, m_threads[blockIdx], &QThread::quit);
     connect(m_workers[blockIdx], &QObject::destroyed, m_workers[blockIdx], &QObject::deleteLater);
-    connect(m_threads[blockIdx], &QThread::finished, m_threads[blockIdx], &QThread::deleteLater);
+    connect(m_threads[blockIdx], &QThread::finished, m_threads[blockIdx], &QObject::deleteLater);
 
     m_threads[blockIdx]->start();
 }
 
-void MainWindow::onCopyProgress(int workerId, int percent) {
-    if (workerId == 0) {
-        ui->progressBar_1->setValue(percent);
-    } else if (workerId == 1) {
-        ui->progressBar_2->setValue(percent);
-    } else if (workerId == 2) {
-        ui->progressBar_3->setValue(percent);
+// Обновленный слот кнопки "Отмена"
+void MainWindow::onCancelCopyClicked() {
+    int idx = getCurrentProfileIdx();
+
+    if (m_threads[idx] && m_threads[idx]->isRunning()) {
+        ui->btnCancelCopy->setEnabled(false); // Сразу гасим кнопку в UI
+        emit requestCancel(idx);             // Отправляем сигнал отмены воркеру
     }
 }
 
-
 void MainWindow::onCopyFinished(int workerId, bool success) {
-    if (workerId == 0) ui->btnStartCopy_1->setEnabled(true);
-    else if (workerId == 1) ui->btnStartCopy_2->setEnabled(true);
-    else ui->btnStartCopy_3->setEnabled(true);
+    if (workerId < 0 || workerId >= 3) return;
 
-    if (success) {
-        QMessageBox::information(this, "Успех", QString("Синхронизация Блока %1 завершена.").arg(workerId + 1));
-    } else {
-        QMessageBox::critical(this, "Ошибка", QString("В Блоке %1 произошел сбой.").arg(workerId + 1));
+    // Сбрасываем состояние кнопок, если завершился текущий активный профиль
+    if (workerId == getCurrentProfileIdx()) {
+        ui->btnStartCopy->setEnabled(true);
+        ui->btnCancelCopy->setEnabled(false); // Выключаем отмену
     }
 
     m_threads[workerId] = nullptr;
     m_workers[workerId] = nullptr;
+
+    // Не выводим сообщение об успехе, если это была отмена
+    if (success) {
+        QMessageBox::information(this, "Успех", QString("Синхронизация профиля №%1 завершена!").arg(workerId + 1));
+    } else {
+        // Можно выводить ошибку, только если отмена не запрашивалась.
+        // Но для простоты оставим общее уведомление об остановке процесса.
+        QMessageBox::warning(this, "Остановка", QString("Копирование профиля №%1 остановлено или завершилось ошибкой.").arg(workerId + 1));
+    }
 }
+
+// Метод обновления UI при переключении радиокнопок
+void MainWindow::onProfileChanged() {
+    int idx = getCurrentProfileIdx();
+
+    ui->lineEditSource->blockSignals(true);
+    ui->lineEditDest->blockSignals(true);
+
+    ui->lineEditSource->setText(m_sourcePaths[idx]);
+    ui->lineEditDest->setText(m_destPaths[idx]);
+
+    ui->lineEditSource->blockSignals(false);
+    ui->lineEditDest->blockSignals(false);
+
+    // ДИНАМИЧЕСКИ ОБНОВЛЯЕМ КНОПКИ ПРИ ПЕРЕКЛЮЧЕНИИ РАДИОКНОПОК:
+    // Если этот профиль сейчас активно копируется в фоне — показываем кнопку отмены активной
+    bool isRunning = (m_threads[idx] && m_threads[idx]->isRunning());
+    ui->btnStartCopy->setEnabled(!isRunning);
+    ui->btnCancelCopy->setEnabled(isRunning);
+}
+
+void MainWindow::onStartCopyClicked() {
+    int idx = getCurrentProfileIdx();
+    startBlockCopy(idx);
+}
+
+void MainWindow::onCopyProgress(int workerId, int percent) {
+    QProgressBar* progressBars[] = { ui->progressBar_1, ui->progressBar_2, ui->progressBar_3 };
+    if (workerId >= 0 && workerId < 3) {
+        progressBars[workerId]->setValue(percent);
+    }
+}
+

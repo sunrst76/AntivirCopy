@@ -17,6 +17,7 @@ public:
 
 public slots:
     void process();
+    void cancel(); // <-- ДОБАВИТЬ: Слот для отмены
 
 signals:
     void progressChanged(int workerId, int percent);
@@ -27,6 +28,7 @@ private:
     int m_id;
     QString m_src;
     QString m_dst;
+    std::atomic<bool> m_cancelRequested{false}; // <-- ДОБАВИТЬ: Атомарный безопасный флаг
 };
 
 // ==================== ГЛАВНОЕ ОКНО (MainWindow) ====================
@@ -37,13 +39,20 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
+signals:
+    void requestCancel(int blockIdx); // Сигнал для отмены конкретного блока
+
+
 private slots:
+
     // Кнопки открытия диалоговых окон
     void onSelectSourceClicked();
     void onSelectDestClicked();
 
     // Кнопка запуска копирования
     void onStartCopyClicked();
+    void onCancelCopyClicked(); // <-- ДОБАВИТЬ: Слот для кнопки отмены
+    void onProfileChanged(); // <-- Добавить этот слот
 
     // Отслеживание изменений текста в полях ввода вручную
     void onSourceTextChanged(const QString &text);
@@ -63,6 +72,7 @@ private:
     // Массивы для управления параллельными потоками
     QThread* m_threads[3];
     CopyWorker* m_workers[3];
+    int getCurrentProfileIdx() const; // <-- ДОБАВИТЬ ЭТУ СТРОКУ
 
     // Внутренние методы архитектуры приложения
     void startBlockCopy(int blockIdx);
