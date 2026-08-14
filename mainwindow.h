@@ -4,6 +4,11 @@
 #include <QMainWindow>
 #include <QThread>
 #include <QDateTime>
+#include <QTimer>
+#include <QTime>
+#include <QSystemTrayIcon>
+#include <QMenu>
+#include <QCloseEvent>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -53,19 +58,25 @@ private slots:
     // Кнопка запуска копирования
     void onStartCopyClicked();
     void onCancelCopyClicked(); // <-- ДОБАВИТЬ: Слот для кнопки отмены
-    void onProfileChanged(); // <-- Добавить этот слот
 
     // Отслеживание изменений текста в полях ввода вручную
     void onSourceTextChanged(const QString &text);
     void onDestTextChanged(const QString &text);
 
     // Ответные слоты на сигналы из фонового потока
-    void onCopyProgress(int workerId, int percent);   
+    void onCopyProgress(int workerId, int percent);
     void onCopyStatusChanged(int workerId, const QString &statusText, qint64 copiedBytes, qint64 totalBytes, qint64 speedBytesSec, qint64 remainingBytes);
     void onCopyFinished(int workerId, bool success);
+    void onProfileChanged(); // <-- Добавить этот слот
+    void onScheduleTypeChanged();    // <-- ДОБАВИТЬ: Слот изменения настроек планировщика
+    void onTimerTick();              // <-- ДОБАВИТЬ: Ежеминутный тик таймера
+    void onExitButtonClicked();     // <-- ДОБАВИТЬ: Слот для кнопки "Выход"
+    void onTrayIconActivated(QSystemTrayIcon::ActivationReason reason); // <-- ДОБАВИТЬ: Клик по трею
 
 private:
     Ui::MainWindow *ui;
+
+    QString m_lastSyncTimes[3]; // <-- ДОБАВИТЬ: Хранилище даты/времени бэкапа для 3 профилей
 
     // ДОБАВЛЕНО: Вспомогательный метод красивого форматирования размера
     QString formatSize(qint64 bytes, bool isSpeed = false) const;
@@ -84,6 +95,25 @@ private:
     // Внутренние методы архитектуры приложения
     void startBlockCopy(int blockIdx);
     void loadSettings();
+
+    // СТРУКТУРА ДЛЯ ХРАНЕНИЯ НАСТРОЕК В ОЗУ (Чтобы не дергать диск при кликах)
+    struct ScheduleConfig {
+        int mode = 0;
+        int interval = 60;
+        QTime time = QTime(18, 0);
+    };
+    ScheduleConfig m_schedConfigs[3]; // Массив настроек для 3-х профилей в ОЗУ
+
+    QTimer* m_scheduleTimer;
+    QTime m_lastExecutionTime[3];
+    QSystemTrayIcon* m_trayIcon;    // <-- ДОБАВИТЬ: Объект иконки в трее
+    bool m_forceClose = false;      // <-- ДОБАВИТЬ: Флаг для полного закрытия утилиты
+
+protected:
+    // ДОБАВИТЬ ЭТУ СТРОКУ: системный перехватчик тиков таймера
+    void timerEvent(QTimerEvent *event) override;
+    // <-- ДОБАВИТЬ: Перехват нажатия на системный крестик окна
+    void closeEvent(QCloseEvent *event) override;
 };
 
 
