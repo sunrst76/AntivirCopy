@@ -21,6 +21,7 @@ public slots:
 
 signals:
     void progressChanged(int workerId, int percent);
+     void statusChanged(int workerId, const QString &statusText); // <-- ДОБАВИТЬ: Сигнал изменения статуса
     void finished(int workerId, bool success);
 
 private:
@@ -60,6 +61,7 @@ private slots:
 
     // Ответные слоты на сигналы из фонового потока
     void onCopyProgress(int workerId, int percent);
+    void onCopyStatusChanged(int workerId, const QString &statusText); // <-- ДОБАВИТЬ: Слот для обработки текста
     void onCopyFinished(int workerId, bool success);
 
 private:

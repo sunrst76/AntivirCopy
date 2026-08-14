@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>660</width>
-    <height>341</height>
+    <width>658</width>
+    <height>356</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -52,7 +52,6 @@
     background-color: #F8F9FA;
     border: 2px solid #E0E0E0;
     border-radius: 8px;
-    padding: 6px 12px;
     color: #333333;
     font-size: 14px;
     selection-background-color: #007ACC;
@@ -81,7 +80,6 @@ QLineEdit:focus {
     background-color: #F8F9FA;
     border: 2px solid #E0E0E0;
     border-radius: 8px;
-    padding: 6px 12px;
     color: #333333;
     font-size: 14px;
     selection-background-color: #007ACC;
@@ -118,7 +116,7 @@ QLineEdit:focus {
     <property name="geometry">
      <rect>
       <x>10</x>
-      <y>250</y>
+      <y>280</y>
       <width>111</width>
       <height>41</height>
      </rect>
@@ -296,7 +294,7 @@ QProgressBar::chunk {
     <property name="geometry">
      <rect>
       <x>130</x>
-      <y>250</y>
+      <y>280</y>
       <width>111</width>
       <height>41</height>
      </rect>
@@ -328,13 +326,26 @@ QPushButton:pressed {
      <bool>false</bool>
     </property>
    </widget>
+   <widget class="QLabel" name="lblStatus">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>240</y>
+      <width>801</width>
+      <height>31</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>TextLabel</string>
+    </property>
+   </widget>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>660</width>
+     <width>658</width>
      <height>22</height>
     </rect>
    </property>

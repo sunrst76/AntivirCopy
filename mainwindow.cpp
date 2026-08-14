@@ -29,7 +29,9 @@ void CopyWorker::cancel() {
 void CopyWorker::process() {
     QDir srcDir(m_src); QDir dstDir(m_dst);
     int totalFiles = countFiles(m_src);
+
     if (totalFiles == 0) {
+        emit statusChanged(m_id, "Папка пуста. Завершение...");
         dstDir.mkpath(m_dst);
         emit progressChanged(m_id, 100); emit finished(m_id, true);
         return;
@@ -38,23 +40,28 @@ void CopyWorker::process() {
 
     int copiedFiles = 0;
     QDirIterator it(m_src, QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        // КРИТИЧЕСКИЙ МОМЕНТ: Проверяем флаг отмены на каждой итерации цикла
-        // Позволяем операционной системе обработать системные сигналы отмены в этом потоке
-        QCoreApplication::processEvents();
 
+    while (it.hasNext()) {
+        QCoreApplication::processEvents();
         if (m_cancelRequested) {
-            emit finished(m_id, false); // Выходим со статусом "неуспешно"
+            emit statusChanged(m_id, "Копирование отменено пользователем.");
+            emit finished(m_id, false);
             return;
         }
+
         it.next();
         QFileInfo srcFileInfo = it.fileInfo();
         QString relativePath = srcDir.relativeFilePath(srcFileInfo.absoluteFilePath());
         QString destPath = dstDir.filePath(relativePath);
 
         if (srcFileInfo.isDir()) {
+            // Отправляем статус о создании папки
+            emit statusChanged(m_id, QString("Создание папки: %1").arg(srcFileInfo.fileName()));
             QDir subDir; if (!subDir.mkpath(destPath)) { emit finished(m_id, false); return; }
         } else {
+            // ОТПРАВЛЯЕМ СТАТУС: Имя текущего копируемого файла
+            emit statusChanged(m_id, QString("Копирование: %1").arg(srcFileInfo.fileName()));
+
             if (QFile::exists(destPath)) {
                 QFileInfo destFileInfo(destPath);
                 if (srcFileInfo.lastModified() <= destFileInfo.lastModified() && srcFileInfo.size() == destFileInfo.size()) {
@@ -70,6 +77,7 @@ void CopyWorker::process() {
             } else { emit finished(m_id, false); return; }
         }
     }
+    emit statusChanged(m_id, "Готово.");
     emit progressChanged(m_id, 100); emit finished(m_id, true);
 }
 
@@ -198,6 +206,7 @@ void MainWindow::startBlockCopy(int blockIdx) {
 
     connect(m_threads[blockIdx], &QThread::started, m_workers[blockIdx], &CopyWorker::process);
     connect(m_workers[blockIdx], &CopyWorker::progressChanged, this, &MainWindow::onCopyProgress);
+    connect(m_workers[blockIdx], &CopyWorker::statusChanged, this, &MainWindow::onCopyStatusChanged); // <-- ДОБАВИТЬ ЭТУ СТРОКУ
     connect(m_workers[blockIdx], &CopyWorker::finished, this, &MainWindow::onCopyFinished);
 
     // НАДЕЖНОЕ СВЯЗЫВАНИЕ ОТМЕНЫ: При генерации сигнала requestCancel, у воркера вызовется слот cancel
@@ -264,6 +273,13 @@ void MainWindow::onProfileChanged() {
     bool isRunning = (m_threads[idx] && m_threads[idx]->isRunning());
     ui->btnStartCopy->setEnabled(!isRunning);
     ui->btnCancelCopy->setEnabled(isRunning);
+
+    // Сбрасываем текст статуса или пишем, что поток активен
+    if (m_threads[idx] && m_threads[idx]->isRunning()) {
+        ui->lblStatus->setText("Выполняется копирование...");
+    } else {
+        ui->lblStatus->setText("Ожидание запуска...");
+    }
 }
 
 void MainWindow::onStartCopyClicked() {
@@ -276,5 +292,15 @@ void MainWindow::onCopyProgress(int workerId, int percent) {
     if (workerId >= 0 && workerId < 3) {
         progressBars[workerId]->setValue(percent);
     }
+}
+
+void MainWindow::onCopyStatusChanged(int workerId, const QString &statusText) {
+    // Выводим статус только в том случае, если этот поток соответствует выбранному сейчас профилю
+    if (workerId == getCurrentProfileIdx()) {
+        ui->lblStatus->setText(statusText);
+    }
+
+    // Опционально: выводим в общую консоль отладки Qt Creator
+    qDebug() << "Поток" << workerId << ":" << statusText;
 }
 
