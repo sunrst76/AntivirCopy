@@ -1,3 +1,4 @@
+#include <QElapsedTimer>
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include <QFileDialog>
@@ -7,44 +8,67 @@
 #include <QFileInfo>
 #include <QSettings>
 #include <QDateTime>
-#include <QDebug>
 #include <QCoreApplication>
+#include <QElapsedTimer> // Библиотека для замера скорости
+#include <QDebug>
+#include <QStorageInfo>
 
-// ==================== РЕАЛИЗАЦИЯ CopyWorker ====================
-// (Код CopyWorker остается без изменений)
 CopyWorker::CopyWorker(int workerId, const QString &src, const QString &dst)
     : m_id(workerId), m_src(src), m_dst(dst) {}
-
-int CopyWorker::countFiles(const QString &dirPath) {
-    int count = 0;
-    QDirIterator it(dirPath, QDir::Files, QDirIterator::Subdirectories);
-    while (it.hasNext()) { it.next(); count++; }
-    return count;
-}
 
 void CopyWorker::cancel() {
     m_cancelRequested = true;
 }
 
-void CopyWorker::process() {
-    QDir srcDir(m_src); QDir dstDir(m_dst);
-    int totalFiles = countFiles(m_src);
+// Подсчет общего объема папки в байтах
+qint64 CopyWorker::countTotalBytes(const QString &dirPath) {
+    qint64 totalBytes = 0;
+    QDirIterator it(dirPath, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        totalBytes += it.fileInfo().size();
+    }
+    return totalBytes;
+}
 
-    if (totalFiles == 0) {
-        emit statusChanged(m_id, "Папка пуста. Завершение...");
+void CopyWorker::process() {
+    QDir srcDir(m_src);
+    QDir dstDir(m_dst);
+
+    qint64 totalBytes = countTotalBytes(m_src);
+
+    if (totalBytes == 0) {
         dstDir.mkpath(m_dst);
-        emit progressChanged(m_id, 100); emit finished(m_id, true);
+        emit statusChanged(m_id, "Папка пуста", 0, 0, 0, 0);
+        emit progressChanged(m_id, 100);
+        emit finished(m_id, true);
         return;
     }
-    if (!dstDir.exists() && !dstDir.mkpath(m_dst)) { emit finished(m_id, false); return; }
 
-    int copiedFiles = 0;
+    if (!dstDir.exists() && !dstDir.mkpath(m_dst)) {
+        emit finished(m_id, false);
+        return;
+    }
+
+    // Проверяем свободное место на диске назначения
+    QStorageInfo destDrive(m_dst);
+    if (destDrive.bytesAvailable() < totalBytes) {
+        emit statusChanged(m_id, "Ошибка: Недостаточно места на целевом диске!", 0, totalBytes, 0, 0);
+        emit finished(m_id, false);
+        return;
+    }
+
+    qint64 copiedBytes = 0;
     QDirIterator it(m_src, QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+
+    QElapsedTimer timer;
+    timer.start();
 
     while (it.hasNext()) {
         QCoreApplication::processEvents();
+
         if (m_cancelRequested) {
-            emit statusChanged(m_id, "Копирование отменено пользователем.");
+            emit statusChanged(m_id, "Отменено", 0, totalBytes, 0, 0);
             emit finished(m_id, false);
             return;
         }
@@ -55,30 +79,102 @@ void CopyWorker::process() {
         QString destPath = dstDir.filePath(relativePath);
 
         if (srcFileInfo.isDir()) {
-            // Отправляем статус о создании папки
-            emit statusChanged(m_id, QString("Создание папки: %1").arg(srcFileInfo.fileName()));
-            QDir subDir; if (!subDir.mkpath(destPath)) { emit finished(m_id, false); return; }
+            QDir subDir;
+            if (!subDir.mkpath(destPath)) {
+                emit finished(m_id, false);
+                return;
+            }
         } else {
-            // ОТПРАВЛЯЕМ СТАТУС: Имя текущего копируемого файла
-            emit statusChanged(m_id, QString("Копирование: %1").arg(srcFileInfo.fileName()));
+            qint64 fileSize = srcFileInfo.size();
+            bool isSkipped = false;
 
+            // Проверка на пропуск существующего файла
             if (QFile::exists(destPath)) {
                 QFileInfo destFileInfo(destPath);
-                if (srcFileInfo.lastModified() <= destFileInfo.lastModified() && srcFileInfo.size() == destFileInfo.size()) {
-                    copiedFiles++;
-                    emit progressChanged(m_id, static_cast<int>((static_cast<double>(copiedFiles) / totalFiles) * 100));
-                    continue;
+                if (srcFileInfo.lastModified() <= destFileInfo.lastModified() && fileSize == destFileInfo.size()) {
+                    copiedBytes += fileSize;
+                    isSkipped = true;
+
+                    // Обновляем прогресс при пропуске
+                    int progress = static_cast<int>((static_cast<double>(copiedBytes) / totalBytes) * 100);
+                    double elapsedSec = static_cast<double>(timer.elapsed()) / 1000.0;
+                    qint64 speedBytesSec = (elapsedSec > 0.05) ? static_cast<qint64>(copiedBytes / elapsedSec) : 0;
+                    qint64 remainingBytes = totalBytes - copiedBytes;
+
+                    emit statusChanged(m_id, srcFileInfo.fileName(), copiedBytes, totalBytes, speedBytesSec, remainingBytes);
+                    emit progressChanged(m_id, progress);
+                } else {
+                    if (!QFile::remove(destPath)) {
+                        emit finished(m_id, false);
+                        return;
+                    }
                 }
-                if (!QFile::remove(destPath)) { emit finished(m_id, false); return; }
             }
-            if (QFile::copy(srcFileInfo.absoluteFilePath(), destPath)) {
-                copiedFiles++;
-                emit progressChanged(m_id, static_cast<int>((static_cast<double>(copiedFiles) / totalFiles) * 100));
-            } else { emit finished(m_id, false); return; }
+
+            // Если файл не пропущен, запускаем поблочное копирование
+            if (!isSkipped) {
+                QFile srcFile(srcFileInfo.absoluteFilePath());
+                QFile destFile(destPath);
+
+                if (!srcFile.open(QIODevice::ReadOnly) || !destFile.open(QIODevice::WriteOnly)) {
+                    emit finished(m_id, false);
+                    return;
+                }
+
+                // Размер блока чтения: 4 Мегабайта
+                const qint64 bufferSize = 4 * 1024 * 1024;
+                QByteArray buffer;
+
+                while (!srcFile.atEnd()) {
+                    // Проверяем отмену прямо во время копирования одного большого файла!
+                    QCoreApplication::processEvents();
+                    if (m_cancelRequested) {
+                        srcFile.close();
+                        destFile.close();
+                        destFile.remove(); // Удаляем недокопированный поврежденный файл
+                        emit statusChanged(m_id, "Отменено", 0, totalBytes, 0, 0);
+                        emit finished(m_id, false);
+                        return;
+                    }
+
+                    buffer = srcFile.read(bufferSize);
+                    qint64 written = destFile.write(buffer);
+
+                    if (written != buffer.size()) {
+                        emit finished(m_id, false);
+                        return;
+                    }
+
+                    // Прибавляем только что записанные байты к общему счетчику
+                    copiedBytes += written;
+
+                    // Мгновенно пересчитываем скорость и прогресс для плавности шкалы
+                    int progress = static_cast<int>((static_cast<double>(copiedBytes) / totalBytes) * 100);
+                    double elapsedSec = static_cast<double>(timer.elapsed()) / 1000.0;
+                    qint64 speedBytesSec = (elapsedSec > 0.05) ? static_cast<qint64>(copiedBytes / elapsedSec) : 0;
+                    qint64 remainingBytes = totalBytes - copiedBytes;
+                    if (remainingBytes < 0) remainingBytes = 0;
+
+                    // Отправляем данные в интерфейс (теперь это происходит каждые 4 Мб)
+                    emit statusChanged(m_id, srcFileInfo.fileName(), copiedBytes, totalBytes, speedBytesSec, remainingBytes);
+                    emit progressChanged(m_id, progress);
+                }
+
+                srcFile.close();
+                destFile.close();
+
+                // Переносим дату изменения оригинального файла на скопированный
+                destFile.setFileTime(srcFileInfo.lastModified(), QFileDevice::FileModificationTime);
+            }
         }
     }
-    emit statusChanged(m_id, "Готово.");
-    emit progressChanged(m_id, 100); emit finished(m_id, true);
+
+    double finalElapsedSec = static_cast<double>(timer.elapsed()) / 1000.0;
+    qint64 finalSpeed = (finalElapsedSec > 0) ? static_cast<qint64>(totalBytes / finalElapsedSec) : 0;
+
+    emit statusChanged(m_id, "Готово", totalBytes, totalBytes, finalSpeed, 0);
+    emit progressChanged(m_id, 100);
+    emit finished(m_id, true);
 }
 
 
@@ -261,26 +357,23 @@ void MainWindow::onProfileChanged() {
 
     ui->lineEditSource->blockSignals(true);
     ui->lineEditDest->blockSignals(true);
-
     ui->lineEditSource->setText(m_sourcePaths[idx]);
     ui->lineEditDest->setText(m_destPaths[idx]);
-
     ui->lineEditSource->blockSignals(false);
     ui->lineEditDest->blockSignals(false);
 
-    // ДИНАМИЧЕСКИ ОБНОВЛЯЕМ КНОПКИ ПРИ ПЕРЕКЛЮЧЕНИИ РАДИОКНОПОК:
-    // Если этот профиль сейчас активно копируется в фоне — показываем кнопку отмены активной
     bool isRunning = (m_threads[idx] && m_threads[idx]->isRunning());
     ui->btnStartCopy->setEnabled(!isRunning);
     ui->btnCancelCopy->setEnabled(isRunning);
 
-    // Сбрасываем текст статуса или пишем, что поток активен
-    if (m_threads[idx] && m_threads[idx]->isRunning()) {
-        ui->lblStatus->setText("Выполняется копирование...");
+    // Сбрасываем текст
+    if (isRunning) {
+        ui->lblStatus->setText("Выполняется расчет объема и копирование...");
     } else {
         ui->lblStatus->setText("Ожидание запуска...");
     }
 }
+
 
 void MainWindow::onStartCopyClicked() {
     int idx = getCurrentProfileIdx();
@@ -294,13 +387,65 @@ void MainWindow::onCopyProgress(int workerId, int percent) {
     }
 }
 
-void MainWindow::onCopyStatusChanged(int workerId, const QString &statusText) {
-    // Выводим статус только в том случае, если этот поток соответствует выбранному сейчас профилю
+void MainWindow::onCopyStatusChanged(int workerId, const QString &statusText, qint64 copiedBytes, qint64 totalBytes, qint64 speedBytesSec, qint64 remainingBytes) {
     if (workerId == getCurrentProfileIdx()) {
-        ui->lblStatus->setText(statusText);
-    }
+        QString formattedTotal = formatSize(totalBytes);
+        QString formattedSpeed = formatSize(speedBytesSec, true);
 
-    // Опционально: выводим в общую консоль отладки Qt Creator
-    qDebug() << "Поток" << workerId << ":" << statusText;
+        if (statusText == "Готово" || statusText == "Отменено" || statusText == "Папка пуста") {
+            ui->lblStatus->setText(QString("%1. Всего: %2 (Ср. скорость: %3)")
+                                       .arg(statusText, formattedTotal, formattedSpeed));
+        } else {
+            QString formattedCopied = formatSize(copiedBytes);
+
+            // Расчет оставшегося времени
+            QString timeString;
+            if (speedBytesSec > 0) {
+                int remainingSeconds = static_cast<int>(remainingBytes / speedBytesSec);
+                timeString = formatTime(remainingSeconds);
+            } else {
+                timeString = "вычисляется...";
+            }
+
+            // Выводим информацию в 4 строки без предупреждений Clazy
+            QString info = QString("Файл: %1\nПрогресс: %2 из %3\nСкорость: %4\nОсталось времени: %5")
+                               .arg(statusText, formattedCopied, formattedTotal, formattedSpeed, timeString);
+
+            ui->lblStatus->setText(info);
+        }
+    }
+}
+
+QString MainWindow::formatSize(qint64 bytes, bool isSpeed) const {
+    double size = static_cast<double>(bytes);
+    QString unit = "Б";
+
+    if (size >= 1024.0) { size /= 1024.0; unit = "Кб"; }
+    if (size >= 1024.0) { size /= 1024.0; unit = "Мб"; }
+    if (size >= 1024.0) { size /= 1024.0; unit = "Гб"; }
+
+    QString speedSuffix = isSpeed ? "/с" : "";
+    // Сначала преобразуем число size в строку с 2 знаками после запятой
+    QString sizeStr = QString::number(size, 'f', 2);
+
+    // Теперь передаем все три строки за один вызов .arg()
+    return QString("%1 %2%3").arg(sizeStr, unit, speedSuffix);
+
+}
+
+QString MainWindow::formatTime(int seconds) const {
+    if (seconds <= 0) return "вычисляется...";
+
+    int h = seconds / 3600;
+    int m = (seconds % 3600) / 60;
+    int s = seconds % 60;
+
+    if (h > 0) {
+        return QString("%1 ч %2 мин").arg(QString::number(h), QString::number(m));
+    } else if (m > 0) {
+        return QString("%1 мин %2 сек").arg(QString::number(m), QString::number(s));
+    } else {
+        return QString("%1 сек").arg(QString::number(s));
+    }
 }
 

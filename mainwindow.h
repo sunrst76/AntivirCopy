@@ -17,19 +17,19 @@ public:
 
 public slots:
     void process();
-    void cancel(); // <-- ДОБАВИТЬ: Слот для отмены
+    void cancel();
 
 signals:
     void progressChanged(int workerId, int percent);
-     void statusChanged(int workerId, const QString &statusText); // <-- ДОБАВИТЬ: Сигнал изменения статуса
+    void statusChanged(int workerId, const QString &statusText, qint64 copiedBytes, qint64 totalBytes, qint64 speedBytesSec, qint64 remainingBytes);
     void finished(int workerId, bool success);
 
 private:
-    int countFiles(const QString &dirPath);
+    qint64 countTotalBytes(const QString &dirPath); // ИЗМЕНЕНО: Считаем байты, а не файлы
     int m_id;
     QString m_src;
     QString m_dst;
-    std::atomic<bool> m_cancelRequested{false}; // <-- ДОБАВИТЬ: Атомарный безопасный флаг
+    std::atomic<bool> m_cancelRequested{false};
 };
 
 // ==================== ГЛАВНОЕ ОКНО (MainWindow) ====================
@@ -60,12 +60,17 @@ private slots:
     void onDestTextChanged(const QString &text);
 
     // Ответные слоты на сигналы из фонового потока
-    void onCopyProgress(int workerId, int percent);
-    void onCopyStatusChanged(int workerId, const QString &statusText); // <-- ДОБАВИТЬ: Слот для обработки текста
+    void onCopyProgress(int workerId, int percent);   
+    void onCopyStatusChanged(int workerId, const QString &statusText, qint64 copiedBytes, qint64 totalBytes, qint64 speedBytesSec, qint64 remainingBytes);
     void onCopyFinished(int workerId, bool success);
 
 private:
     Ui::MainWindow *ui;
+
+    // ДОБАВЛЕНО: Вспомогательный метод красивого форматирования размера
+    QString formatSize(qint64 bytes, bool isSpeed = false) const;
+    // ДОБАВЛЕНО: Вспомогательный метод для красивого форматирования времени
+    QString formatTime(int seconds) const;
 
     // Массивы для путей (индексы 0, 1, 2 для блоков 1, 2, 3)
     QString m_sourcePaths[3];
