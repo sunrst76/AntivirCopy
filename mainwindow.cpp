@@ -11,12 +11,15 @@
 #include <QElapsedTimer>
 #include <QDebug>
 #include <QStorageInfo>
+#include <QProcess>
 
 
 // ==================== РЕАЛИЗАЦИЯ CopyWorker ====================
 
-CopyWorker::CopyWorker(int workerId, const QString &src, const QString &dst)
-    : m_id(workerId), m_src(src), m_dst(dst) {}
+// ИЗМЕНЕНО: Добавлен параметр bool archive и инициализатор : m_archive(archive)
+CopyWorker::CopyWorker(int workerId, const QString &src, const QString &dst, bool archive)
+    : m_id(workerId), m_src(src), m_dst(dst), m_archive(archive) {}
+
 
 void CopyWorker::cancel() {
     m_cancelRequested = true;
@@ -35,6 +38,64 @@ qint64 CopyWorker::countTotalBytes(const QString &dirPath) {
 void CopyWorker::process() {
     QDir srcDir(m_src);
     QDir dstDir(m_dst);
+
+    // ==================== РЕЖИМ АРХИВАЦИИ ====================
+    if (m_archive) {
+        emit statusChanged(m_id, "Подготовка к архивации...", 0, 0, 0, 0);
+
+        if (!dstDir.exists() && !dstDir.mkpath(m_dst)) {
+            emit finished(m_id, false);
+            return;
+        }
+
+        // ИСПРАВЛЕНО: Извлекаем имя самой последней папки в пути источника
+        // Если m_src это "C:/Base1S", то folderName станет "Base1S"
+        QString folderName = QFileInfo(m_src).fileName();
+
+        // Если путь заканчивался на слэш, fileName() может вернуть пустоту.
+        // На этот случай сделаем подстраховку:
+        if (folderName.isEmpty()) {
+            folderName = QDir(m_src).dirName();
+        }
+        if (folderName.isEmpty()) {
+            folderName = "archive"; // Совсем крайний случай
+        }
+
+        // Формируем динамическое имя zip-файла, например: "Base1S.zip"
+        QString zipName = folderName + ".zip";
+        QString zipPath = dstDir.filePath(zipName);
+
+        // Обновляем текст статуса для пользователя
+        emit statusChanged(m_id, QString("Создание архива %1...").arg(zipName), 0, 0, 0, 0);
+        emit progressChanged(m_id, 25);
+
+        // ПРЕОБРАЗУЕМ ПУТИ: меняем "/" на "\" для Windows-консоли
+        QString nativeSrc = QDir::toNativeSeparators(m_src);
+        QString nativeZip = QDir::toNativeSeparators(zipPath);
+
+        // Настраиваем скрытый запуск PowerShell
+        QString program = "powershell";
+        QStringList arguments;
+        arguments << "-NoProfile"
+                  << "-WindowStyle" << "Hidden"
+                  << "-Command"
+                  << QString("Compress-Archive -Path \"%1\\*\" -DestinationPath \"%2\" -Force")
+                         .arg(nativeSrc, nativeZip);
+
+        int exitCode = QProcess::execute(program, arguments);
+
+        if (exitCode == 0) {
+            emit statusChanged(m_id, "Архивация завершена", 0, 0, 0, 0);
+            emit progressChanged(m_id, 100);
+            emit finished(m_id, true);
+        } else {
+            emit statusChanged(m_id, "Ошибка архивации Windows!", 0, 0, 0, 0);
+            emit finished(m_id, false);
+        }
+        return;
+    }
+
+    // ==================== КОНЕЦ БЛОКА АРХИВАЦИИ ====================
 
     qint64 totalBytes = countTotalBytes(m_src);
 
@@ -183,6 +244,7 @@ void CopyWorker::process() {
     emit progressChanged(m_id, 100);
     emit finished(m_id, true);
 }
+
 
 
 // ==================== РЕАЛИЗАЦИЯ MainWindow ====================
@@ -344,7 +406,7 @@ void MainWindow::onTimerTick() {
                 if (elapsedMinutes >= intervalMinutes) {
                     m_lastExecutionTime[i] = currentTime; // Сбрасываем точку отсчета для следующего цикла
                     qDebug() << "Планировщик: Время интервала истекло. Запуск профиля №" << (i + 1);
-                    startBlockCopy(i);
+                    startBlockCopy(i, ui->cbArchive->isChecked());
                 }
             }
         }
@@ -354,13 +416,12 @@ void MainWindow::onTimerTick() {
                 if (m_lastExecutionTime[i].hour() != currentTime.hour() ||
                     m_lastExecutionTime[i].minute() != currentTime.minute()) {
                     m_lastExecutionTime[i] = currentTime;
-                    startBlockCopy(i);
+                    startBlockCopy(i, ui->cbArchive->isChecked());
                 }
             }
         }
     }
 }
-
 
 void MainWindow::loadSettings() {
     QSettings settings("MyCompany", "FolderSyncApp");
@@ -410,7 +471,7 @@ void MainWindow::onSelectDestClicked() {
     if (!path.isEmpty()) ui->lineEditDest->setText(path);
 }
 
-void MainWindow::startBlockCopy(int blockIdx) {
+void MainWindow::startBlockCopy(int blockIdx, bool archive) {
     // Жесткая защита от повторного старта
     if (m_threads[blockIdx] != nullptr || m_workers[blockIdx] != nullptr) {
         qDebug() << "Предотвращен повторный запуск активного профиля №" << (blockIdx + 1);
@@ -424,25 +485,30 @@ void MainWindow::startBlockCopy(int blockIdx) {
         ui->btnCancelCopy->setEnabled(true);
     }
 
-    m_workers[blockIdx] = new CopyWorker(blockIdx, m_sourcePaths[blockIdx], m_destPaths[blockIdx]);
+    m_workers[blockIdx] = new CopyWorker(blockIdx, m_sourcePaths[blockIdx], m_destPaths[blockIdx], archive);
     m_threads[blockIdx] = new QThread();
     m_workers[blockIdx]->moveToThread(m_threads[blockIdx]);
 
-    // Связываем рабочие сигналы прогресса
+    // // Связываем рабочие сигналы прогресса
     connect(m_threads[blockIdx], &QThread::started, m_workers[blockIdx], &CopyWorker::process);
+
+    // ИСПРАВЛЕНО: сигнал называется progressChanged (а не progressChanged)
     connect(m_workers[blockIdx], &CopyWorker::progressChanged, this, &MainWindow::onCopyProgress);
+
+    // ИСПРАВЛЕНО: сигнал называется statusChanged (а не statusChanged)
     connect(m_workers[blockIdx], &CopyWorker::statusChanged, this, &MainWindow::onCopyStatusChanged);
 
-    // Связываем сигнал отмены
+    // // Связываем сигнал отмены
     connect(this, &MainWindow::requestCancel, m_workers[blockIdx], [this, blockIdx](int targetId){
         if (targetId == blockIdx && m_workers[blockIdx]) m_workers[blockIdx]->cancel();
     }, Qt::DirectConnection);
 
-    // СВЯЗЫВАЕМ СИГНАЛ ЗАВЕРШЕНИЯ С ГЛАВНЫМ ОКНОМ (ИСПРАВЛЕНО!)
-    // Теперь окно вовремя узнает, что поток умер, и сбросит указатель в nullptr
+    // // СВЯЗЫВАЕМ СИГНАЛ ЗАВЕРШЕНИЯ С ГЛАВНЫМ ОКНОМ
+    // ИСПРАВЛЕНО: сигнал называется finished (а не finished)
     connect(m_workers[blockIdx], &CopyWorker::finished, this, &MainWindow::onCopyFinished);
 
-    // Правильное каскадное удаление объектов из памяти после работы
+    // // Правильное каскадное удаление объектов из памяти после работы
+    // ИСПРАВЛЕНО: сигнал воркера называется finished
     connect(m_workers[blockIdx], &CopyWorker::finished, m_threads[blockIdx], &QThread::quit);
     connect(m_workers[blockIdx], &CopyWorker::finished, m_workers[blockIdx], &QObject::deleteLater);
     connect(m_threads[blockIdx], &QThread::finished, m_threads[blockIdx], &QObject::deleteLater);
@@ -453,7 +519,7 @@ void MainWindow::startBlockCopy(int blockIdx) {
 
 
 void MainWindow::onStartCopyClicked() {
-    startBlockCopy(getCurrentProfileIdx());
+    startBlockCopy(getCurrentProfileIdx(), ui->cbArchive->isChecked());
 }
 
 void MainWindow::onCancelCopyClicked() {

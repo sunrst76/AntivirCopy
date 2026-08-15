@@ -18,7 +18,8 @@ QT_END_NAMESPACE
 class CopyWorker : public QObject {
     Q_OBJECT
 public:
-    CopyWorker(int workerId, const QString &src, const QString &dst);
+    // ИЗМЕНЕНО: добавили параметр bool archive в конец
+    CopyWorker(int workerId, const QString &src, const QString &dst, bool archive);
 
 public slots:
     void process();
@@ -34,8 +35,10 @@ private:
     int m_id;
     QString m_src;
     QString m_dst;
+    bool m_archive; // ДОБАВЛЕНО: храним флаг архивации
     std::atomic<bool> m_cancelRequested{false};
 };
+
 
 // ==================== ГЛАВНОЕ ОКНО (MainWindow) ====================
 class MainWindow : public QMainWindow {
@@ -94,7 +97,7 @@ private:
     int getCurrentProfileIdx() const;
 
     // Внутренние методы архитектуры приложения
-    void startBlockCopy(int blockIdx);
+    void startBlockCopy(int blockIdx, bool archive); // ИЗМЕНЕНО: принимает флаг архивации
     void loadSettings();
 
     // СТРУКТУРА ДЛЯ ХРАНЕНИЯ НАСТРОЕК В ОЗУ (Чтобы не дергать диск при кликах)
