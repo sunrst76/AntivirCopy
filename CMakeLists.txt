@@ -13,6 +13,7 @@ qt_add_executable(AntivirCopy
     mainwindow.ui
     resources.qrc
     resources.rc
+
 )
 
 target_link_libraries(AntivirCopy
@@ -47,3 +48,4 @@ if(WIN32)
         COMMENT "Running windeployqt..."
     )
 endif()
+

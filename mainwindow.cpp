@@ -249,7 +249,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_trayIcon = new QSystemTrayIcon(this);
 
     // В качестве иконки для трея берем стандартную системную иконку Qt (или вашу кастомную)
-    m_trayIcon->setIcon(this->style()->standardIcon(QStyle::SP_ComputerIcon));
+    m_trayIcon->setIcon(this->style()->standardIcon(QStyle::SP_BrowserReload));
     m_trayIcon->setToolTip("Копирование антивирусных баз ver 2.02");
 
     // Создаем контекстное меню, которое будет всплывать при клике правой кнопкой мыши в трее

@@ -57,7 +57,8 @@ private slots:
 
     // Кнопка запуска копирования
     void onStartCopyClicked();
-    void onCancelCopyClicked(); // <-- ДОБАВИТЬ: Слот для кнопки отмены
+    // Кнопка отмены копирования
+    void onCancelCopyClicked();
 
     // Отслеживание изменений текста в полях ввода вручную
     void onSourceTextChanged(const QString &text);
@@ -67,20 +68,20 @@ private slots:
     void onCopyProgress(int workerId, int percent);
     void onCopyStatusChanged(int workerId, const QString &statusText, qint64 copiedBytes, qint64 totalBytes, qint64 speedBytesSec, qint64 remainingBytes);
     void onCopyFinished(int workerId, bool success);
-    void onProfileChanged(); // <-- Добавить этот слот
-    void onScheduleTypeChanged();    // <-- ДОБАВИТЬ: Слот изменения настроек планировщика
-    void onTimerTick();              // <-- ДОБАВИТЬ: Ежеминутный тик таймера
-    void onExitButtonClicked();     // <-- ДОБАВИТЬ: Слот для кнопки "Выход"
-    void onTrayIconActivated(QSystemTrayIcon::ActivationReason reason); // <-- ДОБАВИТЬ: Клик по трею
+    void onProfileChanged();
+    void onScheduleTypeChanged();    // Слот изменения настроек планировщика
+    void onTimerTick();              // Ежеминутный тик таймера
+    void onExitButtonClicked();     // Слот для кнопки "Выход"
+    void onTrayIconActivated(QSystemTrayIcon::ActivationReason reason); // Клик по трею
 
 private:
     Ui::MainWindow *ui;
 
-    QString m_lastSyncTimes[3]; // <-- ДОБАВИТЬ: Хранилище даты/времени бэкапа для 3 профилей
+    QString m_lastSyncTimes[3]; // Хранилище даты/времени бэкапа для 3 профилей
 
-    // ДОБАВЛЕНО: Вспомогательный метод красивого форматирования размера
+    // Вспомогательный метод красивого форматирования размера
     QString formatSize(qint64 bytes, bool isSpeed = false) const;
-    // ДОБАВЛЕНО: Вспомогательный метод для красивого форматирования времени
+    // Вспомогательный метод для красивого форматирования времени
     QString formatTime(int seconds) const;
 
     // Массивы для путей (индексы 0, 1, 2 для блоков 1, 2, 3)
@@ -90,7 +91,7 @@ private:
     // Массивы для управления параллельными потоками
     QThread* m_threads[3];
     CopyWorker* m_workers[3];
-    int getCurrentProfileIdx() const; // <-- ДОБАВИТЬ ЭТУ СТРОКУ
+    int getCurrentProfileIdx() const;
 
     // Внутренние методы архитектуры приложения
     void startBlockCopy(int blockIdx);
@@ -106,13 +107,13 @@ private:
 
     QTimer* m_scheduleTimer;
     QTime m_lastExecutionTime[3];
-    QSystemTrayIcon* m_trayIcon;    // <-- ДОБАВИТЬ: Объект иконки в трее
-    bool m_forceClose = false;      // <-- ДОБАВИТЬ: Флаг для полного закрытия утилиты
+    QSystemTrayIcon* m_trayIcon;    // Объект иконки в трее
+    bool m_forceClose = false;      // Флаг для полного закрытия утилиты
 
 protected:
-    // ДОБАВИТЬ ЭТУ СТРОКУ: системный перехватчик тиков таймера
+    // системный перехватчик тиков таймера
     void timerEvent(QTimerEvent *event) override;
-    // <-- ДОБАВИТЬ: Перехват нажатия на системный крестик окна
+    // Перехват нажатия на системный крестик окна
     void closeEvent(QCloseEvent *event) override;
 };
 
