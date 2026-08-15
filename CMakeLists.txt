@@ -11,6 +11,8 @@ qt_add_executable(AntivirCopy
     mainwindow.cpp
     mainwindow.h
     mainwindow.ui
+    resources.qrc
+    resources.rc
 )
 
 target_link_libraries(AntivirCopy

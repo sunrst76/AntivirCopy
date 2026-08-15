@@ -192,6 +192,11 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+
+    // Установка иконки приложения из файла ресурсов
+    this->setWindowIcon(QIcon(":/free-icon-antivirus-1905446.png"));
+
+
     this->setWindowTitle("Копирование антивирусных баз");
     this->setFixedSize(this->size());
 
