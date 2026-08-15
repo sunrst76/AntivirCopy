@@ -197,7 +197,7 @@ MainWindow::MainWindow(QWidget *parent)
     this->setWindowIcon(QIcon(":/free-icon-antivirus-1905446.png"));
 
 
-    this->setWindowTitle("Копирование антивирусных баз");
+    this->setWindowTitle("Копирование антивирусных баз ver 2.02");
     this->setFixedSize(this->size());
 
     // Инициализация массивов указателей
@@ -250,7 +250,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // В качестве иконки для трея берем стандартную системную иконку Qt (или вашу кастомную)
     m_trayIcon->setIcon(this->style()->standardIcon(QStyle::SP_ComputerIcon));
-    m_trayIcon->setToolTip("Копирование антивирусных баз");
+    m_trayIcon->setToolTip("Копирование антивирусных баз ver 2.02");
 
     // Создаем контекстное меню, которое будет всплывать при клике правой кнопкой мыши в трее
     QMenu* trayMenu = new QMenu(this);
@@ -316,7 +316,7 @@ void MainWindow::timerEvent(QTimerEvent *event) {
 }
 
 void MainWindow::onTimerTick() {
-    this->setWindowTitle("Копирование антивирусных баз");
+    this->setWindowTitle("Копирование антивирусных баз ver 2.02");
 
     QTime currentTime = QTime::currentTime();
 
