@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.19)
-project(AntivirCopy LANGUAGES CXX)
+project(AntivirCopy LANGUAGES CXX RC)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets)
 
 qt_standard_project_setup()
+
+set_source_files_properties(resources.rc PROPERTIES LANGUAGE RC)
 
 qt_add_executable(AntivirCopy
     WIN32 MACOSX_BUNDLE

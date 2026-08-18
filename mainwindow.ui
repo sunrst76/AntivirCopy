@@ -452,8 +452,8 @@ QPushButton:pressed {
    <widget class="QCheckBox" name="cbArchive">
     <property name="geometry">
      <rect>
-      <x>500</x>
-      <y>270</y>
+      <x>460</x>
+      <y>280</y>
       <width>111</width>
       <height>20</height>
      </rect>
@@ -465,6 +465,32 @@ QPushButton:pressed {
     </property>
     <property name="text">
      <string>Архивировать</string>
+    </property>
+   </widget>
+   <widget class="QCheckBox" name="checkBoxReplaceAll">
+    <property name="geometry">
+     <rect>
+      <x>460</x>
+      <y>260</y>
+      <width>141</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Заменить все файлы</string>
+    </property>
+   </widget>
+   <widget class="QCheckBox" name="checkBoxSyncDelete">
+    <property name="geometry">
+     <rect>
+      <x>460</x>
+      <y>240</y>
+      <width>181</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Удалить несуществующие</string>
     </property>
    </widget>
   </widget>

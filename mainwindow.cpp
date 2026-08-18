@@ -17,8 +17,8 @@
 // ==================== РЕАЛИЗАЦИЯ CopyWorker ====================
 
 // ИЗМЕНЕНО: Добавлен параметр bool archive и инициализатор : m_archive(archive)
-CopyWorker::CopyWorker(int workerId, const QString &src, const QString &dst, bool archive)
-    : m_id(workerId), m_src(src), m_dst(dst), m_archive(archive) {}
+CopyWorker::CopyWorker(int workerId, const QString &src, const QString &dst, bool archive, bool replaceAll, bool syncDelete)
+    : m_id(workerId), m_src(src), m_dst(dst), m_archive(archive), m_replaceAll(replaceAll), m_syncDelete(syncDelete) {}
 
 
 void CopyWorker::cancel() {
@@ -158,7 +158,10 @@ void CopyWorker::process() {
 
             if (QFile::exists(destPath)) {
                 QFileInfo destFileInfo(destPath);
-                if (srcFileInfo.lastModified() <= destFileInfo.lastModified() && fileSize == destFileInfo.size()) {
+
+                // ИЗМЕНЕНО: Проверяем флаг replaceAll. Если он FALSE, работает "умный" пропуск.
+                // Если TRUE — блок if пропускается, и файл принудительно перезаписывается.
+                if (!m_replaceAll && srcFileInfo.lastModified() <= destFileInfo.lastModified() && fileSize == destFileInfo.size()) {
                     copiedBytes += fileSize;
                     isSkipped = true;
 
@@ -176,6 +179,7 @@ void CopyWorker::process() {
                         emit progressChanged(m_id, progress);
                     }
                 } else {
+                    // Сюда попадаем, если файл изменился ИЛИ если m_replaceAll == true
                     if (!QFile::remove(destPath)) {
                         emit finished(m_id, false);
                         return;
@@ -239,6 +243,48 @@ void CopyWorker::process() {
     double finalElapsedSec = static_cast<double>(timer.elapsed()) / 1000.0;
     qint64 finalSpeed = (finalElapsedSec > 0) ? static_cast<qint64>(totalBytes / finalElapsedSec) : 0;
 
+    // ИЗМЕНЕНО: Логика удаления несуществующих в источнике файлов и папок (Синхронизация)
+    if (m_syncDelete && !m_cancelRequested) {
+        emit statusChanged(m_id, "Очистка целевой папки...", copiedBytes, totalBytes, 0, 0);
+
+        // Обходим ЦЕЛЕВУЮ папку. Используем Subdirectories, но обрабатываем файлы снизу вверх
+        // (сначала глубокие файлы, потом их папки), чтобы корректно удалять пустые директории.
+        QDirIterator dstIt(m_dst, QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+
+        // Собираем все пути, чтобы отсортировать их по длине (сначала самые длинные/глубокие)
+        QStringList pathsToDelete;
+        while (dstIt.hasNext()) {
+            dstIt.next();
+            pathsToDelete.append(dstIt.filePath());
+        }
+
+        // Сортируем по убыванию длины пути, чтобы файлы удалялись раньше папок
+        std::sort(pathsToDelete.begin(), pathsToDelete.end(), [](const QString &a, const QString &b) {
+            return a.length() > b.length();
+        });
+
+        for (const QString &dstPath : pathsToDelete) {
+            QCoreApplication::processEvents();
+            if (m_cancelRequested) break;
+
+            QFileInfo dstInfo(dstPath);
+            // Вычисляем, какой путь должен быть у этого объекта в исходной папке
+            QString relPath = dstDir.relativeFilePath(dstPath);
+            QString srcPath = srcDir.filePath(relPath);
+
+            // Если в источнике такого файла/папки нет — удаляем на целевом диске
+            if (!QFile::exists(srcPath)) {
+                if (dstInfo.isDir()) {
+                    QDir dir(dstPath);
+                    dir.removeRecursively(); // Удаляем папку со всем остаточным содержимым
+                } else {
+                    QFile::remove(dstPath);  // Удаляем одиночный файл
+                }
+            }
+        }
+    }
+
+
     // Финальный статус отправляем ВСЕГДА железно
     emit statusChanged(m_id, "Готово", totalBytes, totalBytes, finalSpeed, 0);
     emit progressChanged(m_id, 100);
@@ -259,7 +305,7 @@ MainWindow::MainWindow(QWidget *parent)
     this->setWindowIcon(QIcon(":/free-icon-antivirus-1905446.png"));
 
 
-    this->setWindowTitle("Копирование антивирусных баз ver 2.02");
+    this->setWindowTitle("Копирование антивирусных баз ver 2.03");
     this->setFixedSize(this->size());
 
     // Инициализация массивов указателей
@@ -312,7 +358,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // В качестве иконки для трея берем стандартную системную иконку Qt (или вашу кастомную)
     m_trayIcon->setIcon(this->style()->standardIcon(QStyle::SP_BrowserReload));
-    m_trayIcon->setToolTip("Копирование антивирусных баз ver 2.02");
+    m_trayIcon->setToolTip("Копирование антивирусных баз ver 2.03");
 
     // Создаем контекстное меню, которое будет всплывать при клике правой кнопкой мыши в трее
     QMenu* trayMenu = new QMenu(this);
@@ -378,7 +424,7 @@ void MainWindow::timerEvent(QTimerEvent *event) {
 }
 
 void MainWindow::onTimerTick() {
-    this->setWindowTitle("Копирование антивирусных баз ver 2.02");
+    this->setWindowTitle("Копирование антивирусных баз ver 2.03");
 
     QTime currentTime = QTime::currentTime();
 
@@ -485,7 +531,7 @@ void MainWindow::startBlockCopy(int blockIdx, bool archive) {
         ui->btnCancelCopy->setEnabled(true);
     }
 
-    m_workers[blockIdx] = new CopyWorker(blockIdx, m_sourcePaths[blockIdx], m_destPaths[blockIdx], archive);
+    m_workers[blockIdx] = new CopyWorker(blockIdx, m_sourcePaths[blockIdx], m_destPaths[blockIdx], archive, ui->checkBoxReplaceAll->isChecked(), ui->checkBoxSyncDelete->isChecked());
     m_threads[blockIdx] = new QThread();
     m_workers[blockIdx]->moveToThread(m_threads[blockIdx]);
 

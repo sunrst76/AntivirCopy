@@ -19,7 +19,7 @@ class CopyWorker : public QObject {
     Q_OBJECT
 public:
     // ИЗМЕНЕНО: добавили параметр bool archive в конец
-    CopyWorker(int workerId, const QString &src, const QString &dst, bool archive);
+    CopyWorker(int workerId, const QString &src, const QString &dst, bool archive, bool replaceAll, bool syncDelete);
 
 public slots:
     void process();
@@ -31,11 +31,13 @@ signals:
     void finished(int workerId, bool success);
 
 private:
-    qint64 countTotalBytes(const QString &dirPath); // ИЗМЕНЕНО: Считаем байты, а не файлы
+    qint64 countTotalBytes(const QString &dirPath); // Считаем байты, а не файлы
     int m_id;
     QString m_src;
     QString m_dst;
-    bool m_archive; // ДОБАВЛЕНО: храним флаг архивации
+    bool m_archive; // храним флаг архивации
+    bool m_replaceAll; // переменная для хранения состояния чекбокса замены всех файлов
+    bool m_syncDelete; // переменная для удаления сиротских файлов
     std::atomic<bool> m_cancelRequested{false};
 };
 
